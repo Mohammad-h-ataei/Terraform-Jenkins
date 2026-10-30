@@ -1,50 +1,31 @@
-variable "ec2_sg_name" {}
-variable "vpc_id" {}
-variable "ec2_jenkins_sg_name" {}
+variable "name" { type = string }
+variable "vpc_id" { type = string }
+variable "allowed_ssh_cidrs" { type = list(string) }
 
-output "sg_ec2_sg_ssh_http_id" {
-  value = aws_security_group.ec2_sg_ssh_http.id
-}
-
-output "sg_ec2_jenkins_port_8080" {
-  value = aws_security_group.ec2_jenkins_port_8080.id
-}
-
-resource "aws_security_group" "ec2_sg_ssh_http" {
-  name        = var.ec2_sg_name
-  description = "Enable the Port 22(SSH) & Port 80(http)"
+# ALB: the only component reachable from the internet over HTTP/HTTPS.
+resource "aws_security_group" "alb" {
+  name        = "${var.name}-alb-sg"
+  description = "Public HTTP/HTTPS access to the Jenkins load balancer"
   vpc_id      = var.vpc_id
 
-  # ssh for terraform remote exec
   ingress {
-    description = "Allow remote SSH from anywhere"
-    cidr_blocks = ["0.0.0.0/0"]
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-  }
-
-  # enable http
-  ingress {
-    description = "Allow HTTP request from anywhere"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP (redirected to HTTPS)"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # enable http
   ingress {
-    description = "Allow HTTP request from anywhere"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  #Outgoing request
   egress {
-    description = "Allow outgoing request"
+    description = "Allow all outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -52,26 +33,49 @@ resource "aws_security_group" "ec2_sg_ssh_http" {
   }
 
   tags = {
-    Name = "Security Groups to allow SSH(22) and HTTP(80)"
+    Name = "${var.name}-alb-sg"
   }
 }
 
-resource "aws_security_group" "ec2_jenkins_port_8080" {
-  name        = var.ec2_jenkins_sg_name
-  description = "Enable the Port 8080 for jenkins"
+# Jenkins instance: port 8080 only from the ALB, SSH only from allowed CIDRs.
+resource "aws_security_group" "jenkins" {
+  name        = "${var.name}-jenkins-sg"
+  description = "Jenkins instance access"
   vpc_id      = var.vpc_id
 
-  # ssh for terraform remote exec
   ingress {
-    description = "Allow 8080 port to access jenkins"
-    cidr_blocks = ["0.0.0.0/0"]
-    from_port   = 8080
-    to_port     = 8080
+    description     = "Jenkins UI from the load balancer only"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description = "SSH from allowed admin IPs"
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
+    cidr_blocks = var.allowed_ssh_cidrs
+  }
+
+  egress {
+    description = "Allow all outbound (package installs, plugin downloads)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = {
-    Name = "Security Groups to allow SSH(22) and HTTP(80)"
+    Name = "${var.name}-jenkins-sg"
   }
 }
 
+output "alb_sg_id" {
+  value = aws_security_group.alb.id
+}
+
+output "jenkins_sg_id" {
+  value = aws_security_group.jenkins.id
+}

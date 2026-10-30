@@ -1,0 +1,15 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local, environment-specific values (examples are committed instead)
+terraform.tfvars
+*.auto.tfvars
+backend.hcl

@@ -1,44 +1,45 @@
-variable "ami_id" {}
-variable "instance_type" {}
-variable "tag_name" {}
-variable "public_key" {}
-variable "subnet_id" {}
-variable "sg_for_jenkins" {}
-variable "enable_public_ip_address" {}
-variable "user_data_install_jenkins" {}
+variable "name" { type = string }
+variable "ami_id" { type = string }
+variable "instance_type" { type = string }
+variable "ssh_public_key" { type = string }
+variable "subnet_id" { type = string }
+variable "security_group_ids" { type = list(string) }
+variable "user_data" { type = string }
 
-output "ssh_connection_string_for_ec2" {
-  value = format("%s%s", "ssh -i /Users/rahulwagh/.ssh/aws_ec2_terraform ubuntu@", aws_instance.jenkins_ec2_instance_ip.public_ip)
+resource "aws_key_pair" "jenkins" {
+  key_name   = "${var.name}-key"
+  public_key = var.ssh_public_key
 }
 
-output "jenkins_ec2_instance_ip" {
-  value = aws_instance.jenkins_ec2_instance_ip.id
-}
-
-output "dev_proj_1_ec2_instance_public_ip" {
-  value = aws_instance.jenkins_ec2_instance_ip.public_ip
-}
-
-resource "aws_instance" "jenkins_ec2_instance_ip" {
-  ami           = var.ami_id
-  instance_type = var.instance_type
-  tags = {
-    Name = var.tag_name
-  }
-  key_name                    = "aws_ec2_terraform"
+resource "aws_instance" "jenkins" {
+  ami                         = var.ami_id
+  instance_type               = var.instance_type
+  key_name                    = aws_key_pair.jenkins.key_name
   subnet_id                   = var.subnet_id
-  vpc_security_group_ids      = var.sg_for_jenkins
-  associate_public_ip_address = var.enable_public_ip_address
-
-  user_data = var.user_data_install_jenkins
+  vpc_security_group_ids      = var.security_group_ids
+  associate_public_ip_address = true
+  user_data                   = var.user_data
 
   metadata_options {
-    http_endpoint = "enabled"  # Enable the IMDSv2 endpoint
-    http_tokens   = "required" # Require the use of IMDSv2 tokens
+    http_endpoint = "enabled"
+    http_tokens   = "required" # enforce IMDSv2
+  }
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+    encrypted   = true
+  }
+
+  tags = {
+    Name = "${var.name}-jenkins"
   }
 }
 
-resource "aws_key_pair" "jenkins_ec2_instance_public_key" {
-  key_name   = "aws_ec2_terraform"
-  public_key = var.public_key
+output "instance_id" {
+  value = aws_instance.jenkins.id
+}
+
+output "public_ip" {
+  value = aws_instance.jenkins.public_ip
 }

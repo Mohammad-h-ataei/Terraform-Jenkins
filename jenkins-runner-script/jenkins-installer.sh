@@ -1,18 +1,24 @@
 #!/bin/bash
-sudo apt-get update
-yes | sudo apt install openjdk-11-jdk-headless
-echo "Waiting for 30 seconds before installing the jenkins package..."
-sleep 30
-sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
-  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
-  https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
-  /etc/apt/sources.list.d/jenkins.list > /dev/null
-sudo apt-get update
-yes | sudo apt-get install jenkins
-sleep 30
-echo "Waiting for 30 seconds before installing the Terraform..."
-wget https://releases.hashicorp.com/terraform/1.6.5/terraform_1.6.5_linux_386.zip
-yes | sudo apt-get install unzip
-unzip 'terraform*.zip'
-sudo mv terraform /usr/local/bin/
+# Cloud-init user data: installs Jenkins (LTS) and Terraform on Ubuntu 22.04.
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y fontconfig openjdk-17-jre-headless curl gnupg unzip software-properties-common
+
+# Jenkins LTS repository
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key \
+  -o /usr/share/keyrings/jenkins-keyring.asc
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
+  > /etc/apt/sources.list.d/jenkins.list
+
+# HashiCorp repository (Terraform)
+curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor \
+  -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  > /etc/apt/sources.list.d/hashicorp.list
+
+apt-get update -y
+apt-get install -y jenkins terraform
+
+systemctl enable --now jenkins

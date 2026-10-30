@@ -1,68 +1,78 @@
-module "networking" {
-  source               = "./networking"
-  vpc_cidr             = var.vpc_cidr
-  vpc_name             = var.vpc_name
-  cidr_public_subnet   = var.cidr_public_subnet
-  eu_availability_zone = var.eu_availability_zone
-  cidr_private_subnet  = var.cidr_private_subnet
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
 }
 
-module "security_group" {
-  source              = "./security-groups"
-  ec2_sg_name         = "SG for EC2 to enable SSH(22), HTTPS(443) and HTTP(80)"
-  vpc_id              = module.networking.dev_proj_1_vpc_id
-  ec2_jenkins_sg_name = "Allow port 8080 for jenkins"
+module "networking" {
+  source = "./networking"
+
+  name                 = var.project_name
+  vpc_cidr             = var.vpc_cidr
+  availability_zones   = var.availability_zones
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+}
+
+module "security_groups" {
+  source = "./security-groups"
+
+  name              = var.project_name
+  vpc_id            = module.networking.vpc_id
+  allowed_ssh_cidrs = var.allowed_ssh_cidrs
 }
 
 module "jenkins" {
-  source                    = "./jenkins"
-  ami_id                    = var.ec2_ami_id
-  instance_type             = "t2.medium"
-  tag_name                  = "Jenkins:Ubuntu Linux EC2"
-  public_key                = var.public_key
-  subnet_id                 = tolist(module.networking.dev_proj_1_public_subnets)[0]
-  sg_for_jenkins            = [module.security_group.sg_ec2_sg_ssh_http_id, module.security_group.sg_ec2_jenkins_port_8080]
-  enable_public_ip_address  = true
-  user_data_install_jenkins = templatefile("./jenkins-runner-script/jenkins-installer.sh", {})
+  source = "./jenkins"
+
+  name               = var.project_name
+  ami_id             = data.aws_ami.ubuntu.id
+  instance_type      = var.instance_type
+  ssh_public_key     = var.ssh_public_key
+  subnet_id          = module.networking.public_subnet_ids[0]
+  security_group_ids = [module.security_groups.jenkins_sg_id]
+  user_data          = file("${path.module}/jenkins-runner-script/jenkins-installer.sh")
 }
 
 module "lb_target_group" {
-  source                   = "./load-balancer-target-group"
-  lb_target_group_name     = "jenkins-lb-target-group"
-  lb_target_group_port     = 8080
-  lb_target_group_protocol = "HTTP"
-  vpc_id                   = module.networking.dev_proj_1_vpc_id
-  ec2_instance_id          = module.jenkins.jenkins_ec2_instance_ip
-}
+  source = "./load-balancer-target-group"
 
-module "alb" {
-  source                    = "./load-balancer"
-  lb_name                   = "dev-proj-1-alb"
-  is_external               = false
-  lb_type                   = "application"
-  sg_enable_ssh_https       = module.security_group.sg_ec2_sg_ssh_http_id
-  subnet_ids                = tolist(module.networking.dev_proj_1_public_subnets)
-  tag_name                  = "dev-proj-1-alb"
-  lb_target_group_arn       = module.lb_target_group.dev_proj_1_lb_target_group_arn
-  ec2_instance_id           = module.jenkins.jenkins_ec2_instance_ip
-  lb_listner_port           = 80
-  lb_listner_protocol       = "HTTP"
-  lb_listner_default_action = "forward"
-  lb_https_listner_port     = 443
-  lb_https_listner_protocol = "HTTPS"
-  dev_proj_1_acm_arn        = module.aws_ceritification_manager.dev_proj_1_acm_arn
-  lb_target_group_attachment_port = 8080
+  name        = "${var.project_name}-tg"
+  vpc_id      = module.networking.vpc_id
+  instance_id = module.jenkins.instance_id
 }
 
 module "hosted_zone" {
-  source          = "./hosted-zone"
-  domain_name     = "jenkins.jhooq.org"
-  aws_lb_dns_name = module.alb.aws_lb_dns_name
-  aws_lb_zone_id  = module.alb.aws_lb_zone_id
+  source = "./hosted-zone"
+
+  hosted_zone_name = var.hosted_zone_name
+  record_name      = var.jenkins_domain
+  alb_dns_name     = module.alb.dns_name
+  alb_zone_id      = module.alb.zone_id
 }
 
-module "aws_ceritification_manager" {
-  source         = "./certificate-manager"
-  domain_name    = "jenkins.jhooq.org"
+module "certificate_manager" {
+  source = "./certificate-manager"
+
+  domain_name    = var.jenkins_domain
   hosted_zone_id = module.hosted_zone.hosted_zone_id
+}
+
+module "alb" {
+  source = "./load-balancer"
+
+  name             = "${var.project_name}-alb"
+  security_group   = module.security_groups.alb_sg_id
+  subnet_ids       = module.networking.public_subnet_ids
+  target_group_arn = module.lb_target_group.arn
+  certificate_arn  = module.certificate_manager.certificate_arn
 }
